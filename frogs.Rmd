@@ -1,92 +1,183 @@
 ---
 title: "Frogs"
 author: "Ben Williams"
-date: "July 30, 2015"
+date: ben.williams@alaska.gov
 output: html_document
 ---
-First I changed the data file to a .csv
-Import data and re-label
+
+#Examine Reeves et al. 2014 data 
+
+##Step 1
+
+Pull data from website and add necessary components for analysis.
+```{r load, message=FALSE, echo=FALSE}
+library(ggplot2)
+theme_set(theme_bw(base_size=12)+theme(panel.grid.major=element_blank(), 
+                                       panel.grid.minor=element_blank()))
+library(mgcv)
+library(RCurl)
+```
+
+*Note that the RoadsInfo.csv file only contains information for 36 sites, while there are 60 sites in the FrogAbnormalities.csv file - any idea on how to remedy this would be appreciated*
 ```{r input}
-Htest_R.input2 <- read.csv("Htest_R input2.csv")
+roads <- read.csv(text=getURL('http://datadryad.com/bitstream/handle/10255/dryad.70359/RoadsInfo.csv?sequence=1')) #from Reeves et al. 2014
+names(roads) <- c('Site', 'distance', 'road_type')
 
-# change file name
-dat <- Htest_R.input2
+abnorm <- read.csv(text=getURL('http://datadryad.com/bitstream/handle/10255/dryad.70355/FrogAbnormalities.csv?sequence=1')) #from Reeves et al. 2014
+names(abnorm) <- c('collection_id', 'id','gosner_stage', 'svl', 'tail_length','comments', 'abnormal',
+                   'bleeding_inj', 'skel_ab', 'eye_ab', 'surf_ab', 'Perkensus', 'Site', 'Date', 'Year')
+
+latlon <- read.csv(text=getURL('http://datadryad.com/bitstream/handle/10255/dryad.70361/SiteLocations.csv?sequence=1'))#from Reeves et al. 2014
+names(latlon) <- c("Site", "latitude", "longitude", "area")
+
+frog <- merge(abnorm, roads, by='Site') #merge datasets
+frog <- merge(frog, latlon, by = 'Site')
+frog <- subset(frog ,select = -comments) # drop comments from the dataframe for ease of reading
+frog$Date <- as.Date(frog$Date, "%m/%d/%Y") # define date
+frog$Year <- as.factor(frog$Year)
+frog$dum <- 1 #helpful for predicting GAM with random effects
+frog$Abnormal <- factor(frog$abnormal)
+
+f <- aggregate(abnormal~Site, data=frog, FUN=sum)
+names(f) <- c("Site",'sum.ab')
+frogs <- merge(f, frog, by='Site')
+```
+
+##Exploratory analyses
+Code "turned off" and results not shown at this time for clarity, but easily available.
+```{r summary1, message=FALSE, warning=FALSE, eval=FALSE}
+
+ggplot(frogs, aes(longitude, latitude,color=sum.ab ))+geom_point(size=4)+
+   scale_colour_gradientn(colours=topo.colors(6))
+ggplot(frogs, aes(ROADDISTANCE,abnormal, color=RoadType))+stat_smooth(family='binomial', method='gam',
+                                                                      formula=y~s(x, k=4))
+ggplot(frogs, aes(Year,sum.ab, fill=RoadType))+geom_boxplot(alpha=.25)
+ggplot(frogs, aes(Year,sum.ab))+geom_boxplot(alpha=.25)
+ggplot(frogs, aes(longitude, latitude, color=Year))+geom_jitter(alpha=.25, size=3)
+ggplot(frogs, aes(longitude,latitude))+geom_violin(alpha=.25, fill=4)+facet_grid(Year~.)
+```
+
+*My data observations*  
+There is substantial spatial and temporal variability in this dataset (e.g., increase in sampling intensity by year). Not all years have equivalent number of ponds sampled or of samples from a given pond. This lends toward a spatial and temporal analysis as well as a random effect to account for repeated sampling of the same locations.
+
+To examine all of this we'll look at a generalized additive model (GAM). Set up as such:
+
+This GAM evaluates each *Site* as a random effect (repeated measures), by location *longitude, latitude* and allows the distance to road *distance* variable to have a non-linear shape, *Year* is held as a factor. 
+
+##Presence/absence 
+*I checked variations of this model and they all performed worse, so they aren't presented*
+
+```{r}
+fit0 <- gam(Abnormal~s(distance, k=4)+Year+te(longitude,latitude)+s(Site, bs='re', by=dum)-1, 
+            data=frogs, gamma=1.4, family=binomial)
+summary(fit0)
+
+plot(fit0, page=1, shade=T)
+```
+Main points from the output summary:
+
+1. This model does a **poor job** of describing abnormalities (Deviance explained ~4%);
+2. There is not a relationship between abnormalities and the distance to a road (p-value > 0.05);
+3. There is not a significant relationship between location and abnormalities;
+4. There is a significant *Site* effect.
+
+This model does not describe the abnormality data very well, likely there is/are alternate or confounding variables that have greater relevance than the variables used in this model.
+
+##Examine recent data from Rob
+
+```{r}
+# Htest_R.input2 <- read.csv("Htest_R input2.csv") #old data file
+#Htest_R.input3 <- read.csv("Htest_R input3.csv") # added pond depth (deep/shallow) provided by Rob on Sep 11 2015 - OLD DATA
+Htest_all <- read.csv("Htest_all.csv") #providied by Rob on 2015 Oct 9
+dat <- Htest_all # change file name
+rm(Htest_all) #clean up aisle 9
+
 # changes column names
-names(dat) <- c("pond", "id", "abnormal", "hetero", "road", "oil")
+names(dat) <- c("site", "individual", "abnormal", "hetero", "road", "oil", "main_rd", "distance",
+                "near_oil")
 
+dist <- read.csv('FrogPondDistances2OilField.csv')
+names(dist) <- c('FID', "Site", "latitude", "longitude", "near_FID", "oilfld.dist")
+
+#dat <- subset(dat ,select = -distance) 
+#add factors
 dat$Road <- factor(dat$road)
 dat$Oil <- factor(dat$oil)
 dat$Abnormal <- factor(dat$abnormal)
-dat$Pond <- factor(dat$pond)
+dat$Site <- factor(dat$site)
+dat$dum = 1
+dat$Site <- paste("KNA",substr(dat$Site,2,3), sep="")
+dat$Site <- factor(dat$Site)
 
-
-```
-#Plots
-
-Plot the individual factors by level (0,1). Did this for oil, road, and oil/road interaction - doesn't take into account repeated samples from same ponds.
-```{r plot}
-library(ggplot2)
-theme_set(theme_bw(base_size=12)+theme(panel.grid.major=element_blank(), panel.grid.minor=element_blank()))
-
-ggplot(dat, aes(hetero, abnormal, group=Oil, color=Oil, fill=Oil))+
-   stat_smooth(family='binomial', method='gam', formula=y~s(x, k=4), alpha=.3)+ylim(0,1)+
-   theme(legend.justification=c(1,0), legend.position=c(.9,.7))
+dat1 <- merge(dat, dist, by='Site')
 ```
 
-The above figure shows no real difference between close to or far from oil producing locations - there is a slightly negative relationship between heterozygosity and the presence of abnormalities, away from oil patches.
+Model the recent data with a similar GAM - do not have *Year* information. 
+```{r}
+fit1 <- gam(Abnormal~s(distance, k=4)+te(longitude,latitude)+s(Site, bs='re', by=dum), data=dat1, 
+            family=binomial, gamma=1.4)
+summary(fit1)
+plot(fit1, page=1, shade=T)
+```
+This GAM also shows a road *distance* effect, though it does not have a strong *Site* effect, it does have a strong location effect. Basically the opposite of what was observed for the Dryad data...
 
-```{r plot 2}
-ggplot(dat, aes(hetero, abnormal, group=Road, color=Road, fill=Road))+
-   stat_smooth(family='binomial', method='gam', formula=y~s(x, k=4), alpha=.3)+ylim(0,1)+
-   theme(legend.justification=c(1,0), legend.position=c(.9,.7))
+Include oil field distance in the model
+```{r}
+fit2 <- gam(Abnormal~s(distance, k=4)+te(longitude,latitude)+s(Site, bs='re', by=dum)+s(near_oil, k=4), 
+            data=dat1, family=binomial, gamma=1.4)
+summary(fit2)
+plot(fit2, page=1, shade=T)
 ```
 
-The above figure shows a somewhat signiificant relationship close to or far from a road with frogs further from roads having higher levels of abnormalities.
+Examine a couple of alternate models
+```{r alt}
+fit2a <- gam(Abnormal~s(distance, k=4)+s(Site, bs='re', by=dum)+s(near_oil, k=4), data=dat1, family=binomial,
+             gamma=1.4)
+summary(fit2a)
+plot(fit2a, page=1)
 
-```{r plot 3}
-ggplot(dat, aes(hetero, abnormal, group=interaction(Road, Oil), color=interaction(Road,Oil), fill=interaction(Road,Oil)))+
-      stat_smooth(family='binomial', method='gam', formula=y~s(x, k=4),alpha=.3)+ylim(0,1)+
-   theme(legend.justification=c(1,0), legend.position=c(.9,.7))
+fit2b <- gam(Abnormal~s(distance, k=4)+te(longitude,latitude)+s(near_oil, k=4), data=dat1, family=binomial,
+             gamma=1.4)
+summary(fit2b)
+plot(fit2b, page=1)
 ```
 
-The above figure shows interactions between being close to oil patch and road or far from, or a combination between the two. If a frog is not close to an oil patch or road there is a negative relationship between heterozygosity and abnormalities (though it is weak). If a frog is close to either a road or oil patch, but not both then a) all of the samples have heterozygosity greater than 0, and b) there is no evident relationship between heterozygosity and abnormalities. If a frog is both close to a road and an oil patch there is no significant relationship evident, though there appears to be a trend with higher levels of abnormalities at 0 and heterozygosity levels around 1.5.
+Model fit2a the distance to roads drops out as significant, the site variable is highly significant, and the distance to oil fields is also significant, model fit2b (that uses location instead of *Site*) shows the opposite of this...
 
-
-#Models
-
-Use a GAM for modeling random effects (could also easily use glmer in the lme4 package). 
-
-First examine without random effects
-```{r model}
-library(mgcv)
-m1 <- gam(Abnormal~s(hetero)+Road+Oil, data=dat, gamma=1.4, family = binomial)
-summary(m1)
+Plotting the results of the fit2 GAM we can see that there is really a cluster that is informing the model (warm colors = higher rates of abnormalities)
+```{r}
+plot(fit2a, page=1, shade=T)
+vis.gam(fit2, c('longitude', "latitude"), type='response', plot.type="contour", color="topo", too.far=.10,
+        n.grid=200)
+points(dat1$longitude, dat1$latitude, pch=19)
 ```
 
-This provides the same general evaluation as the above figures do: There is a relationship that is significant when oil and road are 0 (intercept is significant), there is a signhificant effect of road, but not of being close to an oil patch. Further there is no direct relationship between heterozygosity and abnormalities.
+Examine which model is "best"
+```{r best}
+AIC(fit2, fit2a, fit2b)
+BIC(fit2, fit2a, fit2b)
+```
+Choose fit2 as the "best" model - mostly based upon statistical principle. The sampling is repeated at locations so it should have a random effect, it also has a strong spatial component that cannot be ignored.
 
-Same model with random effects for pond <- this is a more appropriate method than the one above...
+Add in heterozygosity to see if it improves fit2.
 
-```{r model2}
-m2 <- gam(Abnormal~s(hetero)+s(Pond, bs='re')+Road+Oil, data=dat, gamma=1.4, family = binomial)
-summary(m2)
+```{r hetero}
+fit2c <- gam(Abnormal~s(distance, k=4)+te(longitude,latitude)+s(Site, bs='re', by=dum)+s(near_oil, k=4)+
+                s(hetero, k=4), data=dat1, family=binomial, gamma=1.4)
+summary(fit2c)
+
+AIC(fit2, fit2c)
+BIC(fit2, fit2c)
 ```
 
-This shows pretty much the same results, though now the road factor is only marginally significant. The locations absorb a fair bit of variability and the overall model explains more deviance, though still isn't that good as a descriptor.
+No it does not (well in these data anyway).
+
 
 Examine if either the road or oil aspects influence heterozygosity.
-```{r model3}
-m3 <- gam(hetero~s(Pond, bs='re')+Road+Oil, data=dat, gamma=1.4)
-summary(m3)
+```{r model3, eval=FALSE}
+fit3 <- gam(hetero~s(distance, k=4)+s(near_oil,k=4)+s(Site, bs='re', by=dum)+te(longitude, latitude), 
+            data=dat1, gamma=1.4)
+summary(fit3)
 ```
+We see that there is not a significant relationship with *distance* to a road, though there is a significant relationship with distance to oil production (linear), there is also a spatial component, though not a *Site* significant site effect.
 
-This model is a poor descriptor, though it does show a significant negative association between oil patch proximity and heterozygisity, there is no significant relationship with proximity to a road.
-
-
-#Wrap up
-
-1. Looks like there is not a relationship in these data between heterozygosity and frog abnormalities,
-2. There is an effect by location - would be helpful to plot out a map of abnormalities and examine spatial effects,
-3. There is a negative relationship between oil patch proximity and heterozygosity.
-
-Short answer, these data do not appear to hold a 'smoking gun' in regard to indetifying a relationship to frog abnormalities.
