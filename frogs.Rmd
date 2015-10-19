@@ -174,7 +174,7 @@ No it does not (well in these data anyway).
 
 
 Examine if either the road or oil aspects influence heterozygosity.
-```{r model3, eval=FALSE}
+```{r model3}
 fit3 <- gam(hetero~s(distance, k=4)+s(near_oil,k=4)+s(Site, bs='re', by=dum)+te(longitude, latitude), 
             data=dat1, gamma=1.4)
 summary(fit3)
