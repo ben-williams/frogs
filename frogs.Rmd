@@ -181,3 +181,9 @@ summary(fit3)
 ```
 We see that there is not a significant relationship with *distance* to a road, though there is a significant relationship with distance to oil production (linear), there is also a spatial component, though not a *Site* significant site effect.
 
+Looking at the spatial partial residuals we see a different pattern than for abnormalities (warmer color = higher heterozygosity)
+```{r}
+vis.gam(fit3, c('longitude', "latitude"), type='response', plot.type="contour", color="topo", too.far=.10,
+        n.grid=200)
+points(dat1$longitude, dat1$latitude, pch=19)
+```
